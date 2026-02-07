@@ -13,11 +13,15 @@ import threading
 import difflib
 import base64
 import html
+import ctypes
+from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import (
     Qt,
+    QCoreApplication,
+    QAbstractNativeEventFilter,
     QObject,
     QPoint,
     QRect,
@@ -182,6 +186,137 @@ DEFAULT_HOTKEYS = {
     "skip": "F11",
     "stop": "F12",
 }
+
+
+# ---------------------------------------------------------------------------
+# Windows global hotkeys (more reliable in packaged apps)
+# ---------------------------------------------------------------------------
+_IS_WINDOWS = sys.platform == "win32"
+if _IS_WINDOWS:
+    _USER32 = ctypes.windll.user32
+    _WM_HOTKEY = 0x0312
+    _MOD_ALT = 0x0001
+    _MOD_CONTROL = 0x0002
+    _MOD_SHIFT = 0x0004
+    _MOD_WIN = 0x0008
+    _MOD_NOREPEAT = 0x4000
+
+    _VK_MAP = {
+        "BACKSPACE": 0x08,
+        "TAB": 0x09,
+        "ENTER": 0x0D,
+        "RETURN": 0x0D,
+        "ESC": 0x1B,
+        "ESCAPE": 0x1B,
+        "SPACE": 0x20,
+        "PAGEUP": 0x21,
+        "PAGEDOWN": 0x22,
+        "END": 0x23,
+        "HOME": 0x24,
+        "LEFT": 0x25,
+        "UP": 0x26,
+        "RIGHT": 0x27,
+        "DOWN": 0x28,
+        "INSERT": 0x2D,
+        "INS": 0x2D,
+        "DELETE": 0x2E,
+        "DEL": 0x2E,
+    }
+
+
+    def _vk_from_key_name(name: str) -> int | None:
+        if not name:
+            return None
+        name = name.upper()
+        if name in _VK_MAP:
+            return _VK_MAP[name]
+        if name.startswith("F") and name[1:].isdigit():
+            num = int(name[1:])
+            if 1 <= num <= 24:
+                return 0x70 + (num - 1)
+        if len(name) == 1 and name.isalnum():
+            return ord(name.upper())
+        return None
+
+
+    def _parse_hotkey(combo: str) -> tuple[int, int] | None:
+        if not combo:
+            return None
+        parts = [p.strip() for p in combo.split("+") if p.strip()]
+        if not parts:
+            return None
+        mods = 0
+        key = None
+        for part in parts:
+            up = part.upper()
+            if up in ("CTRL", "CONTROL"):
+                mods |= _MOD_CONTROL
+            elif up == "ALT":
+                mods |= _MOD_ALT
+            elif up == "SHIFT":
+                mods |= _MOD_SHIFT
+            elif up in ("WIN", "META", "CMD", "COMMAND"):
+                mods |= _MOD_WIN
+            else:
+                key = _vk_from_key_name(up)
+        if key is None:
+            return None
+        return mods | _MOD_NOREPEAT, key
+
+
+    class _WinHotkeyFilter(QAbstractNativeEventFilter):
+        def __init__(self, manager):
+            super().__init__()
+            self._manager = manager
+
+        def nativeEventFilter(self, eventType, message):
+            if eventType != "windows_generic_MSG":
+                return False, 0
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == _WM_HOTKEY:
+                self._manager.handle_hotkey(int(msg.wParam))
+                return True, 0
+            return False, 0
+
+
+    class _WinHotkeyManager:
+        def __init__(self, invoke_ui, log_fn):
+            self._invoke_ui = invoke_ui
+            self._log = log_fn
+            self._registered: dict[int, callable] = {}
+            self._next_id = 1
+            self._filter = _WinHotkeyFilter(self)
+            QCoreApplication.instance().installNativeEventFilter(self._filter)
+
+        def register_all(self, hotkeys: dict, callbacks: dict) -> list[str]:
+            self.unregister_all()
+            failed: list[str] = []
+            for action, combo in hotkeys.items():
+                cb = callbacks.get(action)
+                if not cb:
+                    continue
+                parsed = _parse_hotkey(combo)
+                if not parsed:
+                    failed.append(action)
+                    continue
+                mods, vk = parsed
+                hotkey_id = self._next_id
+                self._next_id += 1
+                if not _USER32.RegisterHotKey(None, hotkey_id, mods, vk):
+                    failed.append(action)
+                    continue
+                self._registered[hotkey_id] = cb
+            return failed
+
+        def handle_hotkey(self, hotkey_id: int):
+            cb = self._registered.get(hotkey_id)
+            if cb:
+                self._invoke_ui(cb)
+
+        def unregister_all(self):
+            for hotkey_id in list(self._registered.keys()):
+                _USER32.UnregisterHotKey(None, hotkey_id)
+            self._registered.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1234,6 +1369,7 @@ class HumanTextEditor(QMainWindow):
 
         self._worker: TypingWorker | None = None
         self._hotkey_hooks: list = []
+        self._win_hotkeys = None
         self._manual_start_pos_fresh = 0
         self._manual_start_pos_replace = 0
 
@@ -1718,18 +1854,36 @@ class HumanTextEditor(QMainWindow):
 
     def _register_global_hotkeys(self):
         self._unregister_global_hotkeys()
+        callbacks = {
+            "start": self._on_start,
+            "pause": self._on_pause,
+            "skip": self._on_skip,
+            "stop": self._on_stop,
+        }
+
+        if _IS_WINDOWS:
+            if self._win_hotkeys is None:
+                self._win_hotkeys = _WinHotkeyManager(self._invoke_ui, self._append_log)
+            failed = self._win_hotkeys.register_all(self._hotkeys, callbacks)
+            success = [a for a in self._hotkeys.keys() if a not in failed]
+            if success:
+                names = ", ".join(f"{a.capitalize()}={self._hotkeys[a]}" for a in success)
+                self._append_log(f"Hotkeys registered (Windows): {names}")
+            if not failed:
+                return
+            self._append_log(
+                "Some hotkeys could not be registered by Windows; attempting keyboard fallback."
+            )
+
         if not _keyboard_available:
             self._append_log("Global hotkeys unavailable (keyboard package not found).")
             return
         try:
             for action, key_combo in self._hotkeys.items():
+                if _IS_WINDOWS and self._win_hotkeys is not None and action not in failed:
+                    continue
                 kb_combo = "+".join(p.strip().lower() for p in key_combo.split("+"))
-                callback = {
-                    "start": self._on_start,
-                    "pause": self._on_pause,
-                    "skip": self._on_skip,
-                    "stop": self._on_stop,
-                }.get(action)
+                callback = callbacks.get(action)
                 if callback:
                     hook = _kb.add_hotkey(kb_combo, self._make_hotkey_callback(callback), suppress=False)
                     self._hotkey_hooks.append(hook)
@@ -1739,6 +1893,8 @@ class HumanTextEditor(QMainWindow):
             self._append_log(f"Hotkey registration error: {exc}")
 
     def _unregister_global_hotkeys(self):
+        if _IS_WINDOWS and self._win_hotkeys is not None:
+            self._win_hotkeys.unregister_all()
         if not _keyboard_available:
             return
         for hook in self._hotkey_hooks:

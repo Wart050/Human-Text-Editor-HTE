@@ -1,0 +1,18 @@
+{
+  "hotkeys": {
+    "start": "F9",
+    "pause": "F10",
+    "skip": "F11",
+    "stop": "F12"
+  },
+  "settings_expanded": true,
+  "mode": 0,
+  "wpm": 65,
+  "variability": 0.3,
+  "typo_rate": 0.0,
+  "type_mode": "Human",
+  "countdown": 3,
+  "your_text": "",
+  "original_text": "",
+  "replacement_text": ""
+}

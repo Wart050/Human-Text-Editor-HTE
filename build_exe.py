@@ -5,9 +5,9 @@ import subprocess
 from pathlib import Path
 
 APP_NAME = "HumanTextEditor"
-ICON_PATH = os.path.join("assets", "icon.ico")
-SCRIPT_PATH = "human_editor.py"
 PROJECT_ROOT = Path(__file__).resolve().parent
+ICON_PATH = PROJECT_ROOT / "assets" / "icon.ico"
+SCRIPT_PATH = PROJECT_ROOT / "human_editor.py"
 
 
 def generate_icon(path: str):
@@ -106,8 +106,11 @@ def ensure_venv_python():
 def build():
     ensure_venv_python()
 
-    if not os.path.exists(ICON_PATH):
-        generate_icon(ICON_PATH)
+    if not ICON_PATH.exists():
+        generate_icon(str(ICON_PATH))
+
+    if not SCRIPT_PATH.exists():
+        raise FileNotFoundError(f"Script not found: {SCRIPT_PATH}")
 
     ensure_pyinstaller()
     ensure_keyboard()
@@ -122,14 +125,14 @@ def build():
         "--name",
         APP_NAME,
         "--icon",
-        ICON_PATH,
+        str(ICON_PATH),
         "--add-data",
-        "assets;assets",
+        f"{PROJECT_ROOT / 'assets'};assets",
         "--hidden-import",
         "keyboard",
-        SCRIPT_PATH,
+        str(SCRIPT_PATH),
     ]
-    subprocess.check_call(args)
+    subprocess.check_call(args, cwd=str(PROJECT_ROOT))
 
     exe_path = os.path.join(PROJECT_ROOT, "dist", f"{APP_NAME}.exe")
     if not os.path.exists(exe_path):

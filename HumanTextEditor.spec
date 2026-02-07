@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['human_editor.py'],
+    ['C:\\Users\\1hass\\OneDrive\\Desktop\\Code\\Personal Code\\Projects\\human_editor\\Human-Text-Editor-HTE\\human_editor.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets')],
+    datas=[('C:\\Users\\1hass\\OneDrive\\Desktop\\Code\\Personal Code\\Projects\\human_editor\\Human-Text-Editor-HTE\\assets', 'assets')],
     hiddenimports=['keyboard'],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets\\icon.ico'],
+    icon=['C:\\Users\\1hass\\OneDrive\\Desktop\\Code\\Personal Code\\Projects\\human_editor\\Human-Text-Editor-HTE\\assets\\icon.ico'],
 )
