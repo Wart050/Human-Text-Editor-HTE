@@ -11,6 +11,10 @@ Human Text Editor simulates realistic typing into any application, with both hum
 - Global hotkeys (F9–F12 by default)
 - Settings and text persistence via `hte_settings.json`
 
+## No-Setup (Easiest)
+
+Use exsiting .exe in "Human-Text-Editor-HTE\dist\HumanTextEditor.exe"
+
 ## Setup
 
 - Python 3.10+ recommended
